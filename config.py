@@ -4,8 +4,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-LLM_MODEL         = os.getenv("LLM_MODEL", "claude-sonnet-4-6")
-LLM_MAX_TOKENS    = int(os.getenv("LLM_MAX_TOKENS", "2048"))
+
+# LiteLLM proxy (takes priority when LITELLM_BASE_URL is set)
+LITELLM_API_KEY  = os.getenv("LITELLM_API_KEY",  "")
+LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL",  "")
+
+CLAUDE_MODEL   = os.getenv("CLAUDE_MODEL",   "claude-haiku-4-5-20251001")
+LITELLM_MODEL  = os.getenv("LITELLM_MODEL",  "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2048"))
 
 TAP_QUERY_URL    = os.getenv("TAP_QUERY_URL",    "http://localhost:8081")
 TAP_UPDATER_URL  = os.getenv("TAP_UPDATER_URL",  "http://localhost:8082")

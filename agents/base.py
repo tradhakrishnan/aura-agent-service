@@ -3,13 +3,38 @@ import random
 from datetime import datetime, timezone
 
 from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
-from config import ANTHROPIC_API_KEY, LLM_MODEL, LLM_MAX_TOKENS
+from config import ANTHROPIC_API_KEY, LITELLM_API_KEY, LITELLM_BASE_URL, CLAUDE_MODEL, LITELLM_MODEL, LLM_MAX_TOKENS
+
+# Runtime provider — can be switched via API without restart.
+# Values: "claude" | "litellm"
+# Default: "litellm" when LITELLM_BASE_URL is configured, else "claude".
+_active_provider: str = "litellm" if LITELLM_BASE_URL else "claude"
 
 
-def get_llm() -> ChatAnthropic:
+def get_active_provider() -> str:
+    return _active_provider
+
+
+def set_active_provider(provider: str) -> None:
+    global _active_provider
+    if provider not in ("claude", "litellm"):
+        raise ValueError(f"Unknown provider: {provider}")
+    _active_provider = provider
+
+
+def get_llm():
+    """Return the LLM client for the currently active provider."""
+    if _active_provider == "litellm" and LITELLM_BASE_URL:
+        return ChatOpenAI(
+            model=LITELLM_MODEL,
+            openai_api_key=LITELLM_API_KEY,
+            openai_api_base=LITELLM_BASE_URL,
+            max_tokens=LLM_MAX_TOKENS,
+        )
     return ChatAnthropic(
-        model=LLM_MODEL,
+        model=CLAUDE_MODEL,
         anthropic_api_key=ANTHROPIC_API_KEY,
         max_tokens=LLM_MAX_TOKENS,
     )

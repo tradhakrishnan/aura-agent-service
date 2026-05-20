@@ -13,7 +13,8 @@ from agents.va import va_node
 from agents.sda import sda_close_node
 import db.mongo as mongo
 import integrations.jira_client as jira
-from config import JIRA_URL, JIRA_PROJECT_KEY
+from config import JIRA_URL, JIRA_PROJECT_KEY, LITELLM_BASE_URL, LITELLM_API_KEY, ANTHROPIC_API_KEY, CLAUDE_MODEL, LITELLM_MODEL
+from agents.base import get_active_provider, set_active_provider
 
 # In-memory run store (fast access for polling)
 runs: dict = {}
@@ -408,6 +409,40 @@ async def jira_webhook(request: Request):
         "event":     event,
         "issue_key": issue_key,
     }
+
+
+@app.get("/agent/config/llm")
+async def get_llm_config():
+    """Return available LLM providers and the currently active one."""
+    return {
+        "active": get_active_provider(),
+        "providers": [
+            {
+                "id":          "claude",
+                "label":       "Claude",
+                "description": "Anthropic Direct",
+                "available":   bool(ANTHROPIC_API_KEY),
+            },
+            {
+                "id":          "litellm",
+                "label":       "LiteLLM",
+                "description": "Proxy",
+                "available":   bool(LITELLM_BASE_URL and LITELLM_API_KEY),
+            },
+        ],
+        "model": LITELLM_MODEL if get_active_provider() == "litellm" else CLAUDE_MODEL,
+    }
+
+
+@app.post("/agent/config/llm")
+async def set_llm_config(body: dict):
+    """Switch the active LLM provider at runtime (no restart needed)."""
+    provider = body.get("provider", "")
+    try:
+        set_active_provider(provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"active": get_active_provider()}
 
 
 @app.get("/agent/jira/issues")
