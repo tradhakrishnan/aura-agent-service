@@ -14,7 +14,7 @@ from agents.sda import sda_close_node
 import db.mongo as mongo
 import integrations.jira_client as jira
 from config import JIRA_URL, JIRA_PROJECT_KEY, LITELLM_BASE_URL, LITELLM_API_KEY, ANTHROPIC_API_KEY, CLAUDE_MODEL, LITELLM_MODEL
-from agents.base import get_active_provider, set_active_provider
+from agents.base import get_active_provider, set_active_provider, reset_node_tokens, get_node_tokens
 
 # In-memory run store (fast access for polling)
 runs: dict = {}
@@ -114,6 +114,7 @@ def _build_initial_state(ticket: Ticket) -> dict:
 def _stream_graph(run_id: str, initial_state: dict):
     """Run LangGraph with streaming — updates runs[run_id] after each node."""
     issue_key = runs[run_id].get("jira_issue_key", "")
+    _prev_input, _prev_output = 0, 0
 
     for event in aura_graph.stream(initial_state):
         for node_name, node_state in event.items():
@@ -126,6 +127,20 @@ def _stream_graph(run_id: str, initial_state: dict):
 
             update = {k: v for k, v in node_state.items() if k != "messages"}
             update["agents_completed"] = agents_done
+
+            # Capture token delta for this node
+            curr = get_node_tokens()
+            node_tokens = {
+                "input":  curr["input"]  - _prev_input,
+                "output": curr["output"] - _prev_output,
+                "total":  (curr["input"] - _prev_input) + (curr["output"] - _prev_output),
+            }
+            _prev_input, _prev_output = curr["input"], curr["output"]
+            agent_tokens = {**runs[run_id].get("agent_tokens", {}), node_name: node_tokens}
+            total_in  = sum(v["input"]  for v in agent_tokens.values())
+            total_out = sum(v["output"] for v in agent_tokens.values())
+            update["agent_tokens"] = agent_tokens
+            update["total_tokens"] = {"input": total_in, "output": total_out, "total": total_in + total_out}
 
             conv = runs[run_id].get("agent_conversation", [])
             for m in node_state.get("messages", []):
@@ -150,6 +165,7 @@ def _stream_graph(run_id: str, initial_state: dict):
 
 
 def _run_background(run_id: str, initial_state: dict):
+    reset_node_tokens()
     mongo.set_current_run_id(run_id)
     issue_key = runs[run_id].get("jira_issue_key", "")
     try:
@@ -194,6 +210,8 @@ async def run_agent(ticket: Ticket):
         "rejected":           False,
         "execution_log":      [],
         "validation_report":  {},
+        "agent_tokens":       {},
+        "total_tokens":       {"input": 0, "output": 0, "total": 0},
         "jira_issue_key":     issue_key,
         "jira_browse_url":    _jira_browse_url(issue_key),
     }
@@ -214,6 +232,7 @@ async def run_agent(ticket: Ticket):
 
 def _run_override(run_id: str):
     """Run ea → va → sda_close after human approval."""
+    reset_node_tokens()
     mongo.set_current_run_id(run_id)
     issue_key = runs[run_id].get("jira_issue_key", "")
     state = {
@@ -233,7 +252,9 @@ def _run_override(run_id: str):
     }
     try:
         for node_fn, node_name in [(ea_node, "ea"), (va_node, "va"), (sda_close_node, "sda_close")]:
+            reset_node_tokens()
             node_state = node_fn(state)
+            node_tokens = get_node_tokens()
             state.update({k: v for k, v in node_state.items() if k != "messages"})
 
             agents_done = runs[run_id].get("agents_completed", [])
@@ -245,9 +266,15 @@ def _run_override(run_id: str):
                 if hasattr(m, "name") and m.name:
                     conv = conv + [{"agent": m.name, "content": m.content, "node": node_name}]
 
+            agent_tokens = {**runs[run_id].get("agent_tokens", {}), node_name: node_tokens}
+            total_in  = sum(v["input"]  for v in agent_tokens.values())
+            total_out = sum(v["output"] for v in agent_tokens.values())
+
             update = {k: v for k, v in node_state.items() if k != "messages"}
             update["agents_completed"]   = agents_done
             update["agent_conversation"] = conv
+            update["agent_tokens"]       = agent_tokens
+            update["total_tokens"]       = {"input": total_in, "output": total_out, "total": total_in + total_out}
 
             runs[run_id].update(update)
             mongo.update_run_fields(run_id, {
@@ -459,10 +486,15 @@ async def list_jira_issues():
         v.get("jira_issue_key") for v in runs.values() if v.get("jira_issue_key")
     }
     for issue in issues:
-        issue["aura_run_id"] = next(
-            (k for k, v in runs.items() if v.get("jira_issue_key") == issue["key"] or v.get("ticket_id") == issue["key"]),
-            None,
-        )
+        matching = [
+            (k, v) for k, v in runs.items()
+            if v.get("jira_issue_key") == issue["key"] or v.get("ticket_id") == issue["key"]
+        ]
+        if matching:
+            latest = max(matching, key=lambda x: x[1].get("started_at") or "")
+            issue["aura_run_id"] = latest[0]
+        else:
+            issue["aura_run_id"] = None
     return {"configured": True, "issues": issues, "project_key": JIRA_PROJECT_KEY}
 
 

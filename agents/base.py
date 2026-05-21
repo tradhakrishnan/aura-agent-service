@@ -1,5 +1,6 @@
 import time
 import random
+import threading
 from datetime import datetime, timezone
 
 from langchain_anthropic import ChatAnthropic
@@ -24,6 +25,28 @@ def set_active_provider(provider: str) -> None:
     _active_provider = provider
 
 
+_token_store = threading.local()
+
+
+def reset_node_tokens() -> None:
+    _token_store.input  = 0
+    _token_store.output = 0
+
+
+def get_node_tokens() -> dict:
+    inp = getattr(_token_store, "input",  0)
+    out = getattr(_token_store, "output", 0)
+    return {"input": inp, "output": out, "total": inp + out}
+
+
+def _accumulate_tokens(response) -> None:
+    usage = getattr(response, "usage_metadata", None)
+    if not usage:
+        return
+    _token_store.input  = getattr(_token_store, "input",  0) + (usage.get("input_tokens",  0) or 0)
+    _token_store.output = getattr(_token_store, "output", 0) + (usage.get("output_tokens", 0) or 0)
+
+
 def get_llm():
     """Return the LLM client for the currently active provider."""
     if _active_provider == "litellm" and LITELLM_BASE_URL:
@@ -45,7 +68,9 @@ def _invoke_with_retry(bound, msgs: list, max_retries: int = 4):
     delay = 15  # seconds — start conservative for rate limits
     for attempt in range(max_retries):
         try:
-            return bound.invoke(msgs)
+            response = bound.invoke(msgs)
+            _accumulate_tokens(response)
+            return response
         except Exception as e:
             err = str(e)
             is_rate_limit = "429" in err or "rate_limit" in err.lower()
