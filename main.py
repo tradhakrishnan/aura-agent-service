@@ -14,7 +14,7 @@ from agents.sda import sda_close_node
 import db.mongo as mongo
 import integrations.jira_client as jira
 from config import JIRA_URL, JIRA_PROJECT_KEY, LITELLM_BASE_URL, LITELLM_API_KEY, ANTHROPIC_API_KEY, CLAUDE_MODEL, LITELLM_MODEL
-from agents.base import get_active_provider, set_active_provider, reset_node_tokens, get_node_tokens
+from agents.base import get_active_provider, set_active_provider, reset_node_tokens, get_node_tokens, get_llm
 
 # In-memory run store (fast access for polling)
 runs: dict = {}
@@ -435,6 +435,53 @@ async def jira_webhook(request: Request):
         "message":   "Webhook received — open Jira Issues in AURA to run agents manually",
         "event":     event,
         "issue_key": issue_key,
+    }
+
+
+@app.post("/agent/parse-ticket")
+async def parse_ticket_from_text(body: dict):
+    """Use LLM to extract structured ticket fields from free-form text."""
+    import json, re
+    text = (body.get("text") or "").strip()[:1000]
+    if not text:
+        raise HTTPException(400, "text field required")
+
+    from langchain_core.messages import SystemMessage, HumanMessage
+
+    system = (
+        "You are a support ticket parser. Extract structured fields from a free-form support request.\n"
+        "Return ONLY a valid JSON object — no markdown, no explanation — with exactly these keys:\n"
+        '{"title":"short title max 10 words","severity":"Critical|High|Medium|Low",'
+        '"affected_system":"MARSHA|ACRS|MINT|TAP|VDS or null",'
+        '"affected_hotel":"hotel code or null","affected_location":"location code or null",'
+        '"affected_eid":"employee EID or null","reported_by":"reporter name/EID or null"}\n'
+        "Infer severity from urgency language (e.g. 'urgent','cannot login','blocking' → High/Critical). "
+        "Return null for any field not clearly present."
+    )
+    human = f"Parse this support request:\n\n{text}"
+
+    parsed: dict = {}
+    try:
+        response = get_llm().invoke([SystemMessage(content=system), HumanMessage(content=human)])
+        content = getattr(response, "content", "") or ""
+        match = re.search(r'\{.*\}', content, re.DOTALL)
+        if match:
+            parsed = json.loads(match.group())
+    except Exception:
+        pass  # fall back to defaults below
+
+    ticket_id = f"INC{uuid.uuid4().hex[:6].upper()}"
+    return {
+        "ticket_id":          ticket_id,
+        "source":             "Manual",
+        "title":              (parsed.get("title") or text[:80]).strip(),
+        "description":        text,
+        "severity":           parsed.get("severity") or "High",
+        "affected_system":    parsed.get("affected_system") or "",
+        "affected_hotel":     parsed.get("affected_hotel") or "",
+        "affected_location":  parsed.get("affected_location") or "",
+        "affected_eid":       parsed.get("affected_eid") or "",
+        "reported_by":        parsed.get("reported_by") or "",
     }
 
 
