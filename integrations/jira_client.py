@@ -63,39 +63,50 @@ def _adf_to_text(node) -> str:
 # ── Issue read ────────────────────────────────────────────────────────────────
 
 def get_project_issues(project_key: str, max_results: int = 50) -> list:
-    """Return all non-Done issues in a project, newest first."""
-    client = _get_client()
-    if not client or not project_key:
+    """Return all issues in a project, newest first.
+    Uses /rest/api/3/search/jql directly (Atlassian deprecated /rest/api/3/search in 2025).
+    """
+    if not (JIRA_URL and JIRA_EMAIL and JIRA_API_TOKEN and project_key):
         return []
     try:
-        jql    = f'project = "{project_key}" ORDER BY created DESC'
-        issues = client.search_issues(
-            jql,
-            maxResults=max_results,
-            fields="summary,description,priority,status,issuetype,assignee,reporter,created,updated",
+        import requests as _requests
+        jql = f'project = "{project_key}" ORDER BY created DESC'
+        resp = _requests.post(
+            f"{JIRA_URL.rstrip('/')}/rest/api/3/search/jql",
+            auth=(JIRA_EMAIL, JIRA_API_TOKEN),
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            json={
+                "jql": jql,
+                "maxResults": max_results,
+                "fields": ["summary", "description", "priority", "status",
+                           "issuetype", "assignee", "reporter", "created", "updated"],
+            },
+            timeout=15,
         )
+        resp.raise_for_status()
+        raw_issues = resp.json().get("issues", [])
         result = []
-        for issue in issues:
-            f        = issue.fields
-            priority = getattr(f, "priority", None)
-            status   = getattr(f, "status",   None)
-            issuetype= getattr(f, "issuetype",None)
-            assignee = getattr(f, "assignee", None)
-            reporter = getattr(f, "reporter", None)
-            raw_desc = f.description or ""
-            desc     = _adf_to_text(raw_desc) if isinstance(raw_desc, dict) else str(raw_desc)
+        for issue in raw_issues:
+            f         = issue.get("fields", {})
+            priority  = f.get("priority")  or {}
+            status    = f.get("status")    or {}
+            issuetype = f.get("issuetype") or {}
+            assignee  = f.get("assignee")  or {}
+            reporter  = f.get("reporter")  or {}
+            raw_desc  = f.get("description") or ""
+            desc      = _adf_to_text(raw_desc) if isinstance(raw_desc, dict) else str(raw_desc)
             result.append({
-                "key":        issue.key,
-                "summary":    f.summary or "",
+                "key":         issue.get("key", ""),
+                "summary":     f.get("summary") or "",
                 "description": desc[:600],
-                "priority":   priority.name  if priority  else "Medium",
-                "status":     status.name    if status    else "Open",
-                "issuetype":  issuetype.name if issuetype else "Bug",
-                "assignee":   assignee.displayName if assignee else None,
-                "reporter":   reporter.displayName if reporter else None,
-                "created":    getattr(f, "created", None),
-                "updated":    getattr(f, "updated", None),
-                "browse_url": f"{JIRA_URL.rstrip('/')}/browse/{issue.key}",
+                "priority":    priority.get("name",  "Medium"),
+                "status":      status.get("name",    "Open"),
+                "issuetype":   issuetype.get("name", "Bug"),
+                "assignee":    assignee.get("displayName"),
+                "reporter":    reporter.get("displayName"),
+                "created":     f.get("created"),
+                "updated":     f.get("updated"),
+                "browse_url":  f"{JIRA_URL.rstrip('/')}/browse/{issue.get('key', '')}",
             })
         return result
     except Exception:
