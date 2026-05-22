@@ -393,10 +393,38 @@ async def get_run_prompts(run_id: str):
 
 @app.get("/agent/runs")
 async def list_runs():
+    # Always read from MongoDB (source of truth) so restarts never lose history.
+    # For any run still active in memory, merge live state on top of the DB record.
+    try:
+        db_docs = mongo.load_all_runs()
+    except Exception:
+        db_docs = []
+
+    # Build a merged view: DB records updated with any live in-memory state
+    merged: dict[str, dict] = {}
+    for doc in db_docs:
+        run_id = doc.get("run_id")
+        if run_id:
+            merged[run_id] = doc
+
+    # Overlay live in-memory state (for actively running jobs)
+    for run_id, v in runs.items():
+        if run_id in merged:
+            merged[run_id].update(v)
+        else:
+            merged[run_id] = v
+
+    # Sort newest first
+    sorted_runs = sorted(
+        merged.values(),
+        key=lambda v: v.get("started_at") or "",
+        reverse=True,
+    )
+
     return [
         {
-            "run_id":           k,
-            "status":           v["status"],
+            "run_id":           v.get("run_id", ""),
+            "status":           v.get("status", "unknown"),
             "ticket_id":        v.get("ticket_id"),
             "ticket_title":     v.get("ticket", {}).get("title", ""),
             "ticket_severity":  v.get("ticket", {}).get("severity", ""),
@@ -410,7 +438,7 @@ async def list_runs():
             "jira_issue_key":   v.get("jira_issue_key", ""),
             "jira_browse_url":  v.get("jira_browse_url", ""),
         }
-        for k, v in reversed(list(runs.items()))
+        for v in sorted_runs
     ]
 
 
