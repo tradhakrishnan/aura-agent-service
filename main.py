@@ -452,7 +452,7 @@ async def parse_ticket_from_text(body: dict):
         "You are a support ticket parser. Extract structured fields from a free-form support request.\n"
         "Return ONLY a valid JSON object — no markdown, no explanation — with exactly these keys:\n"
         '{"title":"short title max 10 words","severity":"Critical|High|Medium|Low",'
-        '"affected_system":"MARSHA|ACRS|MINT|TAP|VDS or null",'
+        '"affected_system":"SAP|CRS1|CRS2|MITE|IAM or null",'
         '"affected_hotel":"hotel code or null","affected_location":"location code or null",'
         '"affected_eid":"employee EID or null","reported_by":"reporter name/EID or null"}\n'
         "Infer severity from urgency language (e.g. 'urgent','cannot login','blocking' → High/Critical). "
