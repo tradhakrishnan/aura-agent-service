@@ -4,10 +4,28 @@ from langchain_core.tools import tool
 from config import TAP_QUERY_URL
 
 
+_ARRAY_FIELDS = ("controlledHotels", "locations", "supervisorEids")
+
+def _compact(data):
+    """Replace large arrays with summary counts to reduce token usage."""
+    if isinstance(data, dict):
+        out = {}
+        for k, v in data.items():
+            if k in _ARRAY_FIELDS and isinstance(v, list):
+                out[k + "_count"] = len(v)
+                out[k + "_sample"] = v[:5]  # keep first 5 for context
+            else:
+                out[k] = _compact(v)
+        return out
+    if isinstance(data, list):
+        return [_compact(i) for i in data]
+    return data
+
+
 def _get(path: str, params: dict = None) -> str:
     try:
         resp = httpx.get(f"{TAP_QUERY_URL}{path}", params=params, timeout=10.0)
-        return json.dumps(resp.json(), indent=2)
+        return json.dumps(_compact(resp.json()), indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 

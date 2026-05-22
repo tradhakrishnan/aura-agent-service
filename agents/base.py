@@ -128,7 +128,11 @@ def run_agent(llm, tools: list, system_prompt: str, context: str, max_iters: int
                 result = tool_map[tc["name"]].invoke(tc["args"])
             except Exception as e:
                 result = f"Tool error: {str(e)}"
-            msgs.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
+            # Cap each tool response to avoid context window overflow
+            result_str = str(result)
+            if len(result_str) > 4000:
+                result_str = result_str[:4000] + "\n... [truncated for context length]"
+            msgs.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
 
     content = getattr(last, "content", str(last)) if last else ""
 

@@ -438,6 +438,80 @@ async def jira_webhook(request: Request):
     }
 
 
+@app.get("/agent/demo-scenarios")
+async def get_demo_scenarios():
+    """Return fresh random IDs from DB for the 3 demo scenario quick-fills."""
+    import random
+    from db.mongo import _get_db
+    db = _get_db()
+
+    def sample_one(collection, match):
+        docs = list(db[collection].aggregate([{"$match": match}, {"$sample": {"size": 1}}]))
+        return docs[0] if docs else None
+
+    marsha_hotel = sample_one("control-hotels", {"crsSystem": "MARSHA"})
+    marsha_loc   = sample_one("control-locations", {"app": "MARSHA"})
+    marsha_user  = sample_one("user-eids", {"app": "MARSHA"})
+    acrs_hotel   = sample_one("control-hotels", {"crsSystem": "ACRS"})
+
+    hotel_id   = marsha_hotel["_id"]   if marsha_hotel else "UNKNOWN"
+    loc_id     = marsha_loc["_id"]     if marsha_loc   else "UNKNOWN"
+    loc_name   = marsha_loc.get("locationName", loc_id) if marsha_loc else loc_id
+    eid        = marsha_user["eid"]    if marsha_user  else "UNKNOWN"
+    hotel2_id  = acrs_hotel["_id"]     if acrs_hotel   else "UNKNOWN"
+
+    return [
+        {
+            "label": "Hotel missing from location",
+            "hotel": hotel_id,
+            "location": loc_id,
+            "location_name": loc_name,
+            "eid": "",
+            "system": "TAP",
+            "severity": "High",
+            "reported_by": "ops-team",
+            "title": f"Hotel code {hotel_id} missing for the control location {loc_id}",
+            "description": (
+                f"Hotel {hotel_id} is expected to be listed under control location "
+                f"{loc_id} ({loc_name}) but is not present in the controlled hotels array. "
+                f"This is causing downstream assignment failures for properties in that region."
+            ),
+        },
+        {
+            "label": "User EID missing app assignment",
+            "hotel": "",
+            "location": "",
+            "location_name": "",
+            "eid": eid,
+            "system": "MARSHA",
+            "severity": "Critical",
+            "reported_by": "helpdesk",
+            "title": f"User {eid} missing MARSHA app assignment",
+            "description": (
+                f"User {eid} does not have an active MARSHA application assignment. "
+                f"They are unable to log into the reservation system and impacting "
+                f"check-in operations at 3 properties."
+            ),
+        },
+        {
+            "label": "Inactive hotel blocking sync",
+            "hotel": hotel2_id,
+            "location": "",
+            "location_name": "",
+            "eid": "",
+            "system": "ACRS",
+            "severity": "Medium",
+            "reported_by": "integration-team",
+            "title": f"Inactive hotel {hotel2_id} blocking ACRS location sync",
+            "description": (
+                f"Hotel {hotel2_id} has status Inactive in TAP but is still referenced "
+                f"in the ACRS assignment feed. This is causing sync errors and preventing "
+                f"nightly reconciliation from completing."
+            ),
+        },
+    ]
+
+
 @app.post("/agent/parse-ticket")
 async def parse_ticket_from_text(body: dict):
     """Use LLM to extract structured ticket fields from free-form text."""
