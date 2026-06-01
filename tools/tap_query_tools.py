@@ -3,6 +3,12 @@ import httpx
 from langchain_core.tools import tool
 from config import TAP_QUERY_URL
 
+# Force IPv4 — avoids Error 99 (EADDRNOTAVAIL) on Docker networks without IPv6
+_http = httpx.Client(
+    transport=httpx.HTTPTransport(local_address="0.0.0.0"),
+    timeout=10.0,
+)
+
 
 _ARRAY_FIELDS = ("controlledHotels", "locations", "supervisorEids")
 
@@ -24,7 +30,7 @@ def _compact(data):
 
 def _get(path: str, params: dict = None) -> str:
     try:
-        resp = httpx.get(f"{TAP_QUERY_URL}{path}", params=params, timeout=10.0)
+        resp = _http.get(f"{TAP_QUERY_URL}{path}", params=params)
         return json.dumps(_compact(resp.json()), indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})

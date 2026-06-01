@@ -3,10 +3,16 @@ import httpx
 from langchain_core.tools import tool
 from config import TAP_UPDATER_URL, MARSHA_URL, MINT_URL, ACRS_URL, VDS_URL
 
+# Force IPv4 — avoids Error 99 (EADDRNOTAVAIL) on Docker networks without IPv6
+_http = httpx.Client(
+    transport=httpx.HTTPTransport(local_address="0.0.0.0"),
+    timeout=10.0,
+)
+
 
 def _patch(url: str, body: dict) -> str:
     try:
-        resp = httpx.patch(url, json=body, timeout=10.0)
+        resp = _http.patch(url, json=body)
         return json.dumps(resp.json(), indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -14,7 +20,7 @@ def _patch(url: str, body: dict) -> str:
 
 def _post(url: str, body: dict) -> str:
     try:
-        resp = httpx.post(url, json=body, timeout=10.0)
+        resp = _http.post(url, json=body)
         return json.dumps(resp.json(), indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -22,7 +28,7 @@ def _post(url: str, body: dict) -> str:
 
 def _put(url: str, body: dict) -> str:
     try:
-        resp = httpx.put(url, json=body, timeout=10.0)
+        resp = _http.put(url, json=body)
         return json.dumps(resp.json(), indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
